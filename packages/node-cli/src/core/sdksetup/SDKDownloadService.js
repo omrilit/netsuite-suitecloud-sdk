@@ -33,6 +33,8 @@ const VALID_JAR_CONTENT_TYPES = [
 	'application/x-jar',
 ];
 
+const successDownloadResponse = { success: true, installedVersion: SDKProperties.getSDKVersion() };
+
 class SDKDownloadService {
 	constructor() {
 		this._fileSystemService = new FileSystemService();
@@ -43,32 +45,39 @@ class SDKDownloadService {
 			HOME_PATH,
 			FOLDERS.SUITECLOUD_SDK
 		);
-
+		const sdkDestinationFile = path.join(sdkDirectory, SDKProperties.getSDKFileName());
 		const fullURL = `${SDKProperties.getDownloadURL()}/${SDKProperties.getSDKFileName()}`;
+		if (this._fileSystemService.fileExists(sdkDestinationFile)) {
+			return successDownloadResponse;
+		}
 
-		executeWithSpinner({
-			action: this._downloadFile(fullURL, sdkDirectory),
+		return executeWithSpinner({
+			action: this._downloadFile(fullURL, sdkDestinationFile),
 			message: TranslationService.getMessage(DOWNLOADING_SUITECLOUD_SDK, fullURL),
+			verbose: true
 		})
-			.then(() =>
+			.then(() => {
 				NodeUtils.println(
 					TranslationService.getMessage(DOWNLOADING_SUITECLOUD_SDK_SUCCESS),
 					NodeUtils.COLORS.INFO
-				)
-			)
-			.catch(error =>
+				);
+				return successDownloadResponse;
+			})
+			.catch(error => {
+				const errMsg = unwrapExceptionMessage(error);
 				NodeUtils.println(
 					TranslationService.getMessage(
 						DOWNLOADING_SUITECLOUD_SDK_ERROR,
 						fullURL,
-						unwrapExceptionMessage(error)
+						errMsg
 					),
 					NodeUtils.COLORS.ERROR
-				)
-			);
+				);
+				return {success: false, errors: [errMsg]};
+			});
 	}
 
-	_downloadFile(url, sdkDirectory) {
+	_downloadFile(url, sdkDestinationFile) {
 		const proxy = process.env.npm_config_https_proxy || process.env.npm_config_proxy;
 
 		const isProxyRequired = proxy && !SDKProperties.configFileExists();
@@ -80,7 +89,6 @@ class SDKDownloadService {
 			resolveWithFullResponse: true,
 			...(isProxyRequired && { proxy: proxy }),
 		};
-
 		return request(options).then(function(response) {
 			if (!VALID_JAR_CONTENT_TYPES.includes(response.headers['content-type'])) {
 				throw TranslationService.getMessage(
@@ -88,12 +96,6 @@ class SDKDownloadService {
 				);
 			}
 
-			// remove all JAR files before writing response to file
-			fs.readdirSync(sdkDirectory)
-				.filter(file => /[.]jar$/.test(file))
-				.map(file => fs.unlinkSync(path.join(sdkDirectory, file)));
-
-			const sdkDestinationFile = path.join(sdkDirectory, SDKProperties.getSDKFileName());
 			const file = fs.createWriteStream(sdkDestinationFile);
 			file.write(response.body, 'binary');
 			file.end();
